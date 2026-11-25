@@ -1,8 +1,6 @@
 """Non-destructive Obsidian synchronization."""
 from __future__ import annotations
 
-from pathlib import Path
-
 from .config import Settings
 from .database import connect_db
 from .security import safe_resolve

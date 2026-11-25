@@ -26,21 +26,23 @@ async def stream_chat(settings: Settings, message: str, mode: str = "agent") -> 
         headers = {"Authorization": f"Bearer {profile['api_key'] or 'ollama'}"}
         payload = {"model": profile["model_id"], "messages": [{"role": "user", "content": message}], "stream": True}
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(3, read=30)) as client:
-                async with client.stream("POST", f"{profile['base_url'].rstrip('/')}/chat/completions", headers=headers, json=payload) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line.startswith("data: "):
-                            continue
-                        data = line[6:]
-                        if data == "[DONE]":
-                            break
-                        parsed = json.loads(data)
-                        token = parsed.get("choices", [{}])[0].get("delta", {}).get("content")
-                        if token:
-                            yield sse("token", {"text": token})
-                    yield sse("done", {"fallback": False})
-                    return
+            async with (
+                httpx.AsyncClient(timeout=httpx.Timeout(3, read=30)) as client,
+                client.stream("POST", f"{profile['base_url'].rstrip('/')}/chat/completions", headers=headers, json=payload) as response,
+            ):
+                response.raise_for_status()
+                async for line in response.aiter_lines():
+                    if not line.startswith("data: "):
+                        continue
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    parsed = json.loads(data)
+                    token = parsed.get("choices", [{}])[0].get("delta", {}).get("content")
+                    if token:
+                        yield sse("token", {"text": token})
+                yield sse("done", {"fallback": False})
+                return
         except (httpx.HTTPError, json.JSONDecodeError, KeyError, IndexError):
             pass
     if results:

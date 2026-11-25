@@ -2,7 +2,12 @@ from pathlib import Path
 
 from backend.config import Settings
 from backend.database import connect_db, init_db
-from backend.obsidian import END_MARKER, START_MARKER, replace_sync_block, sync_radar_moc
+from backend.obsidian import (
+    END_MARKER,
+    START_MARKER,
+    replace_sync_block,
+    sync_radar_moc,
+)
 
 
 def test_replace_sync_block_preserves_surrounding_text_and_is_idempotent():

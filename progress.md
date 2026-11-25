@@ -13,3 +13,20 @@
 - Vendored pinned local KaTeX 0.16.11, marked 12.0.2, DOMPurify 3.1.6, and KaTeX fonts.
 - Implemented the complete AppState-driven six-view shell, command palette, settings drawer, status telemetry, citations/PDF inspector, keyboard flows, sanitation, and streaming math buffering.
 - Frontend policy suite passes (3 tests); standalone frontend audit passes.
+- Product audit added a launch-ready Free/Pro model using locally verified Ed25519 license tokens and provider-neutral checkout configuration.
+- Signed license tests pass for valid, tampered, expired, grace-period, activation, and backend Pro enforcement cases.
+- Experimental Electron wrapper isolated under `build/electron-experimental/`; helper tests pass 3/3.
+- Electron dependency install attempt failed with EALLOWGIT; switching away from the Git-dependent builder release rather than bypassing package policy.
+- Added TrustedHost enforcement, restrictive response security headers, structured per-client API rate limiting, and a 500-character search query bound.
+- Fresh hardening verification passes 3/3 tests.
+- Automated security-review skill could not run because the repository has no resolvable `origin/HEAD`; proceeding with targeted manual review and tests.
+- Targeted audit found and fixed cross-site mutation exposure, optional per-launch API capability enforcement, provider-test SSRF, owner-only runtime data permissions, and Electron fixed-port impersonation.
+- Upgraded Electron and electron-builder, patched vulnerable transitive minimatch paths, and reached zero npm audit findings.
+- Ruff and mypy are clean; full pytest passes 38 tests; frontend policy/audit and Electron helper tests pass.
+- Bundled PyInstaller server built and passed an authenticated launch-nonce health probe.
+- First installer build produced AppImage but `.deb` packaging stopped on missing homepage/maintainer metadata; metadata added for retry.
+- Rebuilt the corrected Electron package after adding `wrapper-lib.cjs` to the ASAR allowlist; ASAR inspection confirms all four expected files.
+- Produced final AppImage (253,135,271 bytes) and Debian package (224,679,548 bytes).
+- Launched the real packaged Electron executable on a random loopback port, confirmed its bundled PyInstaller backend, exercised all six workspace entry points, verified every local runtime asset returned HTTP 200, and inspected a nonblank screenshot.
+- Fresh final verification: 40 pytest tests passed; Ruff and mypy are clean; frontend audit, JavaScript syntax, and Python compilation pass; pip-audit and npm audit report zero known vulnerabilities; Electron helper tests pass 3/3.
+- Canonical Cognito remains running on `127.0.0.1:8765`; the experimental Electron application remains running with isolated data for user review.

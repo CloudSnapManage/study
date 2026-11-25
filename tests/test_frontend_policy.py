@@ -1,6 +1,5 @@
-from pathlib import Path
 import re
-
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
@@ -31,6 +30,21 @@ def test_frontend_has_one_app_state_and_all_six_views():
         assert f'data-view="{view}"' in text
     assert 'addEventListener' in text
     assert 'DOMPurify.sanitize' in text
+    assert '/api/license/status' in text
+    assert 'Activate license' in text
+    assert 'Cognito Pro' in text
+
+
+def test_launch_interactions_and_accessibility_contracts_are_wired():
+    text = sources()
+    assert "action === 'toggle-preview'" in text
+    assert "sendChat(`Teach me" in text
+    assert "handleAction(target).catch" in text
+    assert "palette.requestId" in text
+    assert 'aria-pressed=' in text
+    assert 'role="dialog" aria-modal="true"' in text
+    assert 'aria-controls="palette-results"' in text
+    assert "workspace.focus()" in text
 
 
 def test_styles_obey_precision_shell_and_banned_style_policy():

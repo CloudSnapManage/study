@@ -1,13 +1,13 @@
 """SM-2 review scheduling."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 
 def schedule_review(ease_factor: float, interval_days: int, repetitions: int, rating: int, now: datetime | None = None) -> dict:
     if rating not in {1, 2, 3, 4}:
         raise ValueError("Rating must be between 1 and 4")
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     quality = {1: 0, 2: 2, 3: 4, 4: 5}[rating]
     new_ease = max(1.3, ease_factor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)))
     if rating == 1:

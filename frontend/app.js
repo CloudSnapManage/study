@@ -12,7 +12,7 @@ const AppState = {
   radarFilter: 'all',
   messages: [],
   toolTraces: [],
-  stream: { active: false, text: '', pendingMath: '' },
+  stream: { active: false, text: '', pendingMath: '', citations: [] },
   pdf: null,
   vault: [],
   vaultType: 'all',
@@ -20,8 +20,10 @@ const AppState = {
   vaultSelected: null,
   mock: { active: false, submitted: false, questions: [], current: 0, answers: {}, flagged: [], remaining: 0, timer: null },
   audit: null,
-  palette: { items: [], selected: 0 },
+  palette: { items: [], selected: 0, requestId: 0 },
   settings: {},
+  license: { tier: 'free', features: [], valid: true, checkout_url: null },
+  chatMode: 'agent',
 };
 
 const views = {
@@ -37,13 +39,22 @@ const cleanHTML = value => window.DOMPurify.sanitize(value, { USE_PROFILES: { ht
 const setWorkspace = html => { $('#workspace').innerHTML = cleanHTML(html); renderMath($('#workspace')); };
 
 async function api(path, options = {}) {
-  const config = { headers: { 'Content-Type': 'application/json', ...(options.headers || {}) }, ...options };
+  const config = { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } };
   const response = await fetch(path, config);
   const type = response.headers.get('content-type') || '';
   const data = type.includes('json') ? await response.json() : await response.text();
-  if (!response.ok) throw new Error(data.error || data.detail || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const error = new Error(data.error || data.detail || `Request failed (${response.status})`);
+    error.code = data.code;
+    error.status = response.status;
+    if (data.code === 'pro_required') openPlan();
+    throw error;
+  }
   return data;
 }
+
+function isPro() { return AppState.license.tier === 'pro'; }
+function proBadge() { return isPro() ? '' : '<span class="pro-badge">PRO</span>'; }
 
 function notify(message, kind = 'info') {
   const toast = $('#toast');
@@ -104,10 +115,17 @@ function updateChrome() {
   $('#obsidian-status').textContent = AppState.status.obsidian;
   $('#llm-status').textContent = AppState.status.llm;
   $('#token-status').textContent = String(AppState.status.tokens);
+  $('#plan-tier').textContent = AppState.license.tier.toUpperCase();
+  $('.plan-indicator')?.classList.toggle('is-pro', isPro());
   $('#db-dot').classList.toggle('ok', true);
   $('#obsidian-dot').classList.toggle('ok', AppState.status.obsidian !== 'Unset');
   $('#llm-dot').classList.toggle('ok', !/offline|unavailable/i.test(AppState.status.llm));
   $('#subject-filter').value = AppState.subject;
+  const sidebarButton = $('[data-action="toggle-sidebar"]');
+  if (sidebarButton) {
+    sidebarButton.setAttribute('aria-expanded', String(!AppState.sidebarCollapsed));
+    sidebarButton.setAttribute('aria-label', AppState.sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation');
+  }
 }
 
 function emptyState(title, detail, action = '', label = '') {
@@ -146,7 +164,7 @@ function renderRadar() {
     const probability = Math.round(Number(topic.probability_score || topic.probability || 0));
     return `<tr><td><input type="checkbox" data-action="toggle-mastery" data-id="${Number(topic.id)}" ${topic.mastered ? 'checked' : ''} aria-label="Mark ${escapeHTML(topic.topic_name || topic.name)} mastered"></td><td><div class="topic-name">${escapeHTML(topic.topic_name || topic.name)}</div><div class="subtext">${escapeHTML(topic.source_filename || 'Indexed materials')}</div></td><td><span class="badge">${escapeHTML(topic.subject || 'General')}</span></td><td class="numeric">${Number(topic.note_mentions || 0)}</td><td class="numeric">${Number(topic.past_paper_mentions || 0)}</td><td><div class="probability"><div class="frequency-bar"><i style="width:${Math.min(100,Math.max(0,probability))}%"></i></div><span>${probability}%</span></div></td><td><button class="text-action" data-action="study-topic" data-topic="${escapeHTML(topic.topic_name || topic.name)}">Study in Chat</button></td></tr>`;
   }).join('')}</tbody></table></div>` : emptyState('No exam topics indexed', 'Add PDFs to materials/notes and materials/past_papers, then scan the folder.', 'scan-materials', 'Scan Folder');
-  setWorkspace(`<section class="view radar-view"><header class="view-header"><h1>Exam Radar</h1><button class="button" data-action="sync-obsidian">Sync MOC to Obsidian</button></header><div class="filterbar"><div class="filters">${[['all','All'],['high','High Yield >=70%'],['unmastered','Unmastered Only']].map(([id,label]) => `<button class="filter-chip ${AppState.radarFilter === id ? 'is-active':''}" data-action="radar-filter" data-filter="${id}">${label}</button>`).join('')}</div><span class="metric">${rows.length} topics</span></div>${body}</section>`);
+  setWorkspace(`<section class="view radar-view"><header class="view-header"><h1>Exam Radar</h1><button class="button" data-action="sync-obsidian">Sync MOC to Obsidian</button></header><div class="filterbar"><div class="filters">${[['all','All'],['high','High Yield >=70%'],['unmastered','Unmastered Only']].map(([id,label]) => `<button class="filter-chip ${AppState.radarFilter === id ? 'is-active':''}" data-action="radar-filter" data-filter="${id}" aria-pressed="${AppState.radarFilter === id}">${label}</button>`).join('')}</div><span class="metric">${rows.length} topics</span></div>${body}</section>`);
 }
 
 function traceHTML(trace) {
@@ -154,15 +172,16 @@ function traceHTML(trace) {
 }
 
 function messageHTML(message) {
-  return `<article class="message ${message.role}">${message.role === 'assistant' ? mathAwareMarkdown(message.content || '') : `<p>${escapeHTML(message.content || '')}</p>`}</article>`;
+  const citations = (message.citations || []).map(item => sourceBadge({ document_id: item.docId, page_number: item.page, filename: item.filename })).join(' ');
+  return `<article class="message ${message.role}">${message.role === 'assistant' ? mathAwareMarkdown(message.content || '') : `<p>${escapeHTML(message.content || '')}</p>`}${citations ? `<p>${citations}</p>` : ''}</article>`;
 }
 
 function renderChat() {
   const messages = [...AppState.messages];
-  if (AppState.stream.active || AppState.stream.text) messages.push({ role: 'assistant', content: AppState.stream.text });
+  if (AppState.stream.active || AppState.stream.text) messages.push({ role: 'assistant', content: AppState.stream.text, citations: AppState.stream.citations || [] });
   const stream = messages.length ? messages.map(messageHTML).join('') + AppState.toolTraces.map(traceHTML).join('') : emptyState('No active thread', 'Ask a question grounded in indexed course materials. Citations open the exact PDF page.', '', '');
   const pdf = AppState.pdf ? `<aside class="pdf-inspector"><header class="pdf-controls"><button class="icon-button" data-action="close-pdf" aria-label="Close PDF">×</button><span class="page-label">${escapeHTML(AppState.pdf.filename || 'PDF')} · Page ${Number(AppState.pdf.page)}</span><div class="segmented"><button class="is-active">Fit</button><button>150%</button></div></header><div class="pdf-canvas"><img alt="Rendered PDF page ${Number(AppState.pdf.page)}" src="/api/pdf/${Number(AppState.pdf.docId)}/page/${Number(AppState.pdf.page)}?term=${encodeURIComponent(AppState.pdf.term || '')}"></div></aside>` : '';
-  setWorkspace(`<section class="view chat-view"><header class="chat-toolbar"><div class="header-actions"><select id="profile-select" aria-label="Model profile"><option>${escapeHTML(AppState.status.llm)}</option></select><div class="segmented" aria-label="Chat mode"><button class="is-active" data-mode="agent">Agent + Tools</button><button data-mode="strict">Strict Syllabus</button><button data-mode="tutor">Tutor</button></div></div><button class="button" data-action="save-thread">Save Thread to Obsidian</button></header><div class="chat-split ${AppState.pdf ? 'has-pdf':''}"><section class="chat-pane"><div class="message-stream" id="message-stream">${stream}</div><form class="chat-composer" id="chat-form"><textarea name="message" placeholder="Ask about indexed notes or past papers" aria-label="Message"></textarea><button class="button primary" type="submit" ${AppState.stream.active ? 'disabled':''}>Send <kbd>Enter</kbd></button></form></section>${pdf}</div></section>`);
+  setWorkspace(`<section class="view chat-view"><header class="chat-toolbar"><div class="header-actions"><select id="profile-select" aria-label="Model profile"><option>${escapeHTML(AppState.status.llm)}</option></select><div class="segmented" aria-label="Chat mode"><button class="${AppState.chatMode==='agent'?'is-active':''}" data-action="chat-mode" data-mode="agent" aria-pressed="${AppState.chatMode==='agent'}">Agent + Tools ${proBadge()}</button><button class="${AppState.chatMode==='strict'?'is-active':''}" data-action="chat-mode" data-mode="strict" aria-pressed="${AppState.chatMode==='strict'}">Strict Syllabus</button><button class="${AppState.chatMode==='tutor'?'is-active':''}" data-action="chat-mode" data-mode="tutor" aria-pressed="${AppState.chatMode==='tutor'}">Tutor</button></div></div><button class="button" data-action="save-thread">Save Thread to Obsidian</button></header><div class="chat-split ${AppState.pdf ? 'has-pdf':''}"><section class="chat-pane"><div class="message-stream" id="message-stream">${stream}</div><form class="chat-composer" id="chat-form"><textarea name="message" placeholder="Ask about indexed notes or past papers" aria-label="Message"></textarea><button class="button primary" type="submit" ${AppState.stream.active ? 'disabled':''}>Send <kbd>Enter</kbd></button></form></section>${pdf}</div></section>`);
   const pane = $('#message-stream'); if (pane) pane.scrollTop = pane.scrollHeight;
 }
 
@@ -177,7 +196,7 @@ function renderVault() {
   if (selected) AppState.vaultSelected = selected.id;
   const left = items.length ? items.map(item => `<button class="master-row ${String(item.id) === String(AppState.vaultSelected) ? 'is-active':''}" data-action="select-vault" data-id="${Number(item.id)}"><strong>${escapeHTML(item.name || item.caption || 'Untitled')}</strong><span class="master-row-meta"><span class="badge">${escapeHTML(item.subject || 'General')}</span><span class="metric">p. ${Number(item.page_number || 1)}</span></span></button>`).join('') : emptyState('Vault is empty', 'Scan course PDFs to extract formulas and diagrams.', 'scan-materials', 'Scan Folder');
   const detail = selected ? `<article><header class="detail-header"><div><h1>${escapeHTML(selected.name || selected.caption || 'Untitled')}</h1>${sourceBadge(selected)}</div><div class="header-actions"><button class="button" data-action="copy-tex" data-tex="${escapeHTML(selected.latex || '')}">Copy TeX</button><button class="button primary" data-action="add-to-sprint" data-id="${Number(selected.id)}">Add to Sprint</button></div></header><div class="equation-block"><span data-tex="${escapeHTML(selected.latex || selected.context || '')}" data-display="true"></span><button class="button copy-equation" data-action="copy-tex" data-tex="${escapeHTML(selected.latex || '')}">Copy TeX</button></div><h2 class="section-label">Variable legend</h2><table class="legend-table"><thead><tr><th>Symbol</th><th>Meaning</th><th>SI Unit</th></tr></thead><tbody>${(selected.variables || []).map(v => `<tr><td class="metric">${escapeHTML(v.symbol)}</td><td>${escapeHTML(v.meaning)}</td><td class="metric">${escapeHTML(v.unit || '—')}</td></tr>`).join('') || '<tr><td colspan="3" class="subtext">No variable legend extracted.</td></tr>'}</tbody></table><h2 class="section-label">Related past exam appearances</h2><p class="subtext">${escapeHTML(selected.exam_appearances || 'No linked past-paper occurrence.')}</p></article>` : '';
-  setWorkspace(`<section class="view vault-view"><div class="vault-filterbar"><div class="segmented">${[['all','All'],['formula','Formulas'],['diagram','Diagrams'],['definition','Definitions']].map(([id,label]) => `<button class="${AppState.vaultType === id ? 'is-active':''}" data-action="vault-filter" data-filter="${id}">${label}</button>`).join('')}</div><input id="vault-search" type="search" value="${escapeHTML(AppState.vaultQuery)}" placeholder="Filter vault  /" aria-label="Filter vault"></div><div class="master-detail"><div class="master-list">${left}</div><div class="detail-pane">${detail}</div></div></section>`);
+  setWorkspace(`<section class="view vault-view"><div class="vault-filterbar"><div class="segmented">${[['all','All'],['formula','Formulas'],['diagram','Diagrams'],['definition','Definitions']].map(([id,label]) => `<button class="${AppState.vaultType === id ? 'is-active':''}" data-action="vault-filter" data-filter="${id}" aria-pressed="${AppState.vaultType === id}">${label}</button>`).join('')}</div><input id="vault-search" type="search" value="${escapeHTML(AppState.vaultQuery)}" placeholder="Filter vault  /" aria-label="Filter vault"></div><div class="master-detail"><div class="master-list">${left}</div><div class="detail-pane">${detail}</div></div></section>`);
 }
 
 function renderMock() {
@@ -204,7 +223,8 @@ function renderCurrentView() {
 
 async function loadStatus() {
   try {
-    const data = await api('/api/health');
+    const [data, license] = await Promise.all([api('/api/health'), api('/api/license/status')]);
+    AppState.license = license;
     AppState.status = {
       chunks: Number(data.chunks ?? data.chunk_count ?? 0),
       obsidian: data.obsidian?.status || data.obsidian || 'Unset',
@@ -228,6 +248,7 @@ function renderSubjects() {
 }
 
 async function loadView(view = AppState.view) {
+  if ((view === 'mock' || view === 'checker') && !isPro()) { openPlan(); return; }
   AppState.view = view;
   try {
     if (view === 'sprint') { const data = await api(`/api/sprint/today${AppState.subject ? `?subject=${encodeURIComponent(AppState.subject)}`:''}`); AppState.sprint = data.cards || data.items || data || []; AppState.sprintIndex = Math.min(AppState.sprintIndex, Math.max(0,AppState.sprint.length - 1)); }
@@ -235,6 +256,8 @@ async function loadView(view = AppState.view) {
     if (view === 'vault') { const data = await api(`/api/vault${AppState.subject ? `?subject=${encodeURIComponent(AppState.subject)}`:''}`); AppState.vault = data.items || data.formulas || data || []; }
   } catch (error) { notify(error.message, 'error'); }
   renderCurrentView();
+  const workspace = $('#workspace');
+  if (workspace) workspace.focus();
 }
 
 async function scanMaterials() {
@@ -260,11 +283,11 @@ async function gradeCard(grade) {
 async function sendChat(message) {
   if (!message.trim() || AppState.stream.active) return;
   AppState.messages.push({ role: 'user', content: message.trim() });
-  AppState.stream = { active: true, text: '', pendingMath: '' };
+  AppState.stream = { active: true, text: '', pendingMath: '', citations: [] };
   AppState.toolTraces = [];
   renderChat();
   try {
-    const response = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ message, messages: AppState.messages, subject: AppState.subject, mode: 'agent' }) });
+    const response = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type':'application/json' }, body: JSON.stringify({ message, messages: AppState.messages, subject: AppState.subject, mode: AppState.chatMode }) });
     if (!response.ok || !response.body) throw new Error(`Chat unavailable (${response.status})`);
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
     while (true) {
@@ -278,8 +301,8 @@ async function sendChat(message) {
     AppState.stream.text += `\n\nChat error: ${error.message}`;
   } finally {
     const finalText = AppState.stream.text + AppState.stream.pendingMath;
-    if (finalText.trim()) AppState.messages.push({ role: 'assistant', content: finalText });
-    AppState.stream = { active: false, text: '', pendingMath: '' };
+    if (finalText.trim()) AppState.messages.push({ role: 'assistant', content: finalText, citations: AppState.stream.citations || [] });
+    AppState.stream = { active: false, text: '', pendingMath: '', citations: [] };
     renderChat();
   }
 }
@@ -290,12 +313,15 @@ function processSSE(raw) {
   if (!dataLines.length) return;
   let data; try { data = JSON.parse(dataLines.join('\n')); } catch { data = { token: dataLines.join('\n') }; }
   if (event === 'token' || event === 'message') {
-    const combined = AppState.stream.pendingMath + (data.token ?? data.content ?? '');
+    const combined = AppState.stream.pendingMath + (data.token ?? data.text ?? data.content ?? '');
     const [stable, pending] = splitStableMath(combined);
     AppState.stream.text += stable; AppState.stream.pendingMath = pending;
   } else if (event === 'tool_start') AppState.toolTraces.push({ name: data.name || 'tool', arguments: JSON.stringify(data.arguments || {}) });
-  else if (event === 'tool_result') { const trace = AppState.toolTraces.findLast(item => item.name === data.name && !item.result) || AppState.toolTraces.at(-1); if (trace) { trace.result = data.result; trace.summary = data.summary || 'complete'; } }
-  else if (event === 'citation') AppState.stream.text += ` [${data.filename || 'Source'}, p. ${data.page || 1}]`;
+  else if (event === 'tool_result') { const trace = AppState.toolTraces.findLast(item => item.name === data.name && !item.result) || AppState.toolTraces.at(-1); if (trace) { trace.result = data.result ?? data.results; trace.summary = data.summary || `${Number(data.count || 0)} results`; } }
+  else if (event === 'citation') {
+    const page = data.page ?? data.page_number ?? 1;
+    AppState.stream.citations = [...(AppState.stream.citations || []), { docId: data.document_id, page, filename: data.filename || 'Source' }];
+  }
   else if (event === 'error') AppState.stream.text += `\n\n${data.error || 'Model stream failed.'}`;
   renderChat();
 }
@@ -307,19 +333,35 @@ async function openPalette(query = '') {
 }
 
 async function updatePalette(query) {
+  const requestId = ++AppState.palette.requestId;
   let items = commands.filter(item => item.label.toLowerCase().includes(query.toLowerCase()));
   if (query.trim()) {
     try { const data = await api(`/api/search?q=${encodeURIComponent(query)}&limit=8`); items = [...items, ...(data.results || data.items || data || []).map(item => ({ ...item, type: item.type || 'search', label: item.name || item.heading || item.content?.slice(0,70) || 'Search result' }))]; }
     catch { /* workspace actions remain available offline */ }
   }
+  if (requestId !== AppState.palette.requestId) return;
   AppState.palette.items = items; AppState.palette.selected = 0; renderPaletteResults();
 }
 
 function renderPaletteResults() {
-  $('#palette-results').innerHTML = cleanHTML(AppState.palette.items.map((item, i) => `<button class="command-result ${i === AppState.palette.selected ? 'is-selected':''}" data-action="palette-result" data-index="${i}" role="option"><span>${escapeHTML(item.label)}</span><span class="metric">${escapeHTML(item.type)}</span></button>`).join('') || '<div class="empty-state"><p>No matching commands or indexed material.</p></div>');
+  $('#palette-results').innerHTML = cleanHTML(AppState.palette.items.map((item, i) => `<button class="command-result ${i === AppState.palette.selected ? 'is-selected':''}" data-action="palette-result" data-index="${i}" role="option" aria-selected="${i === AppState.palette.selected}"><span>${escapeHTML(item.label)}</span><span class="metric">${escapeHTML(item.type)}</span></button>`).join('') || '<div class="empty-state"><p>No matching commands or indexed material.</p></div>');
 }
 
-function closeOverlays() { $('#palette').classList.add('is-hidden'); $('#settings').classList.add('is-hidden'); }
+function renderPlan() {
+  const license = AppState.license;
+  const metadata = license.tier === 'pro' ? `<dl class="license-meta"><dt>Status</dt><dd>${license.in_grace ? 'Offline grace' : 'Active'}</dd><dt>License</dt><dd>${escapeHTML(license.license_id || 'Pro')}</dd><dt>Customer</dt><dd>${escapeHTML(license.customer || 'Licensed')}</dd><dt>Renews / expires</dt><dd>${escapeHTML(license.expires_at || 'Perpetual')}</dd></dl>` : '';
+  $('#plan-content').innerHTML = cleanHTML(`
+    <section class="plan-summary"><span class="plan-name">Cognito ${license.tier === 'pro' ? 'Pro' : 'Free'}</span><p>${license.tier === 'pro' ? 'Advanced study workflows are active on this device.' : 'Local study core. Upgrade for advanced synthesis and integrations.'}</p>${metadata}</section>
+    <div class="tier-comparison">
+      <section><header><strong>Free</strong><span>Active core</span></header><ul><li>Unlimited local PDF indexing</li><li>Search and exact-page verifier</li><li>Daily Sprint and Exam Radar</li><li>Local retrieval chat</li></ul></section>
+      <section class="pro-tier"><header><strong>Pro</strong><span>Licensed workflows</span></header><ul><li>Everything in Free</li><li>Mock exams and Solution Checker</li><li>Obsidian sync and thread export</li><li>Custom model providers and exports</li></ul></section>
+    </div>
+    ${license.tier === 'pro' ? '<button class="button" data-action="deactivate-license">Deactivate on this device</button>' : `<div class="plan-actions">${license.checkout_url ? '<button class="button primary" data-action="view-pro">View Pro</button>' : '<p class="subtext">Checkout URL is not configured. Set COGNITO_CHECKOUT_URL before commercial distribution.</p>'}<label>License token<textarea id="license-token" placeholder="Paste signed license token"></textarea></label><button class="button" data-action="activate-license">Activate license</button></div>`}
+  `);
+}
+
+function openPlan() { renderPlan(); $('#plan-drawer').classList.remove('is-hidden'); }
+function closeOverlays() { $('#palette').classList.add('is-hidden'); $('#settings').classList.add('is-hidden'); $('#plan-drawer').classList.add('is-hidden'); }
 function executePalette(index) {
   const item = AppState.palette.items[index]; if (!item) return;
   closeOverlays();
@@ -337,13 +379,15 @@ async function handleAction(target) {
   else if (action === 'toggle-sidebar') { AppState.sidebarCollapsed = !AppState.sidebarCollapsed; updateChrome(); }
   else if (action === 'open-palette') openPalette();
   else if (action === 'open-settings') $('#settings').classList.remove('is-hidden');
+  else if (action === 'open-plan') openPlan();
+  else if (action === 'chat-mode') { if (target.dataset.mode === 'agent' && !isPro()) { openPlan(); } else { AppState.chatMode=target.dataset.mode; renderChat(); } }
   else if (action === 'close-overlay') closeOverlays();
   else if (action === 'scan-materials') scanMaterials();
   else if (action === 'reveal-card') { AppState.sprintRevealed = true; renderSprint(); }
   else if (action === 'grade-card') gradeCard(target.dataset.grade);
   else if (action === 'radar-filter') { AppState.radarFilter = target.dataset.filter; renderRadar(); }
   else if (action === 'toggle-mastery') { try { await api(`/api/radar/${Number(target.dataset.id)}/mastery`, { method:'POST', body:JSON.stringify({ mastered: target.checked }) }); notify('Mastery updated'); } catch (e) { target.checked = !target.checked; notify(e.message,'error'); } }
-  else if (action === 'study-topic') { AppState.view='chat'; AppState.messages.push({ role:'user', content:`Teach me ${target.dataset.topic} using only my indexed course materials.` }); renderChat(); }
+  else if (action === 'study-topic') { AppState.view='chat'; await sendChat(`Teach me ${target.dataset.topic} using only my indexed course materials.`); }
   else if (action === 'sync-obsidian') { try { const result=await api('/api/obsidian/sync',{method:'POST',body:'{}'}); notify(result.message || 'Obsidian MOC synced'); } catch(e){notify(e.message,'error');} }
   else if (action === 'open-citation') { AppState.pdf={docId:target.dataset.docId,page:target.dataset.page,term:target.dataset.term,filename:target.textContent.split(',')[0]}; AppState.view='chat'; renderChat(); }
   else if (action === 'close-pdf') { AppState.pdf=null; renderChat(); }
@@ -351,17 +395,25 @@ async function handleAction(target) {
   else if (action === 'vault-filter') { AppState.vaultType=target.dataset.filter; renderVault(); }
   else if (action === 'copy-tex') { await navigator.clipboard.writeText(target.dataset.tex || ''); notify('TeX copied'); }
   else if (action === 'add-to-sprint') { try { await api(`/api/vault/${Number(target.dataset.id)}/flashcard`,{method:'POST',body:'{}'}); notify('Added to Daily Sprint'); } catch(e){notify(e.message,'error');} }
-  else if (action === 'start-mock') { try { const data=await api('/api/mock/generate',{method:'POST',body:JSON.stringify({subject:$('#mock-subject').value,count:Number($('#mock-count').value),bias:$('#mock-bias').value})}); AppState.mock={active:true,submitted:false,questions:data.questions||data.items||[],current:0,answers:{},flagged:[],remaining:Number(data.duration_seconds||3600),timer:null}; startTimer(); renderMock(); } catch(e){notify(e.message,'error');} }
+  else if (action === 'start-mock') { try { const data=await api('/api/mock/generate',{method:'POST',body:JSON.stringify({subject:$('#mock-subject').value,count:Number($('#mock-count').value),source_bias:$('#mock-bias').value==='past'?'past_papers_weighted':'balanced'})}); AppState.mock={active:true,submitted:false,questions:data.questions||data.items||[],current:0,answers:{},flagged:[],remaining:Number(data.duration_seconds||3600),timer:null}; startTimer(); renderMock(); } catch(e){notify(e.message,'error');} }
   else if (action === 'mock-question') { saveMockAnswer(); AppState.mock.current=Number(target.dataset.index); renderMock(); }
   else if (action === 'mock-prev' || action === 'mock-next') { saveMockAnswer(); AppState.mock.current=Math.max(0,Math.min(AppState.mock.questions.length-1,AppState.mock.current+(action==='mock-next'?1:-1))); renderMock(); }
   else if (action === 'toggle-flag') { const i=AppState.mock.current; AppState.mock.flagged=AppState.mock.flagged.includes(i)?AppState.mock.flagged.filter(x=>x!==i):[...AppState.mock.flagged,i]; renderMock(); }
   else if (action === 'submit-mock') { saveMockAnswer(); try { const data=await api('/api/mock/grade',{method:'POST',body:JSON.stringify({questions:AppState.mock.questions,answers:AppState.mock.answers})}); AppState.mock.questions=data.questions||AppState.mock.questions; AppState.mock.submitted=true; AppState.mock.active=false; clearInterval(AppState.mock.timer); renderMock(); } catch(e){notify(e.message,'error');} }
   else if (action === 'reset-mock') { AppState.mock={active:false,submitted:false,questions:[],current:0,answers:{},flagged:[],remaining:0,timer:null}; renderMock(); }
   else if (action === 'missed-to-sprint') { try { await api('/api/mock/missed-to-sprint',{method:'POST',body:JSON.stringify({questions:AppState.mock.questions})}); notify('Missed concepts added to Daily Sprint'); } catch(e){notify(e.message,'error');} }
+  else if (action === 'toggle-preview') {
+    const derivation = $('#derivation-input')?.value || '';
+    AppState.audit = { summary: 'Live derivation preview', steps: derivation.split('\n').filter(Boolean).map(note => ({ valid: true, note })) };
+    renderChecker();
+  }
   else if (action === 'audit-steps') auditSteps();
   else if (action === 'error-flashcard') { try { await api('/api/checker/flashcard',{method:'POST',body:JSON.stringify({step:Number(target.dataset.step),audit:AppState.audit})}); notify('Error flashcard created'); } catch(e){notify(e.message,'error');} }
   else if (action === 'palette-result') executePalette(Number(target.dataset.index));
   else if (action === 'test-connection') testConnection();
+  else if (action === 'view-pro') { if (AppState.license.checkout_url) window.open(AppState.license.checkout_url, '_blank', 'noopener'); }
+  else if (action === 'activate-license') { const token=$('#license-token')?.value.trim(); if(!token){notify('Paste a license token','error');return;} try{AppState.license=await api('/api/license/activate',{method:'POST',body:JSON.stringify({token})});updateChrome();renderPlan();notify('Cognito Pro activated');}catch(e){notify(e.message,'error');} }
+  else if (action === 'deactivate-license') { AppState.license=await api('/api/license/deactivate',{method:'POST',body:'{}'});updateChrome();renderPlan();notify('License deactivated'); }
   else if (action === 'save-thread') { try { await api('/api/obsidian/thread',{method:'POST',body:JSON.stringify({messages:AppState.messages})}); notify('Thread saved to Obsidian'); } catch(e){notify(e.message,'error');} }
 }
 
@@ -378,7 +430,7 @@ async function testConnection() {
   catch(e){$('#connection-result').textContent=e.message;}
 }
 
-document.addEventListener('click', event => { const target=event.target.closest('[data-action]'); if (target) handleAction(target); if (event.target === $('#palette')) closeOverlays(); });
+document.addEventListener('click', event => { const target=event.target.closest('[data-action]'); if (target) handleAction(target).catch(error => notify(error.message, 'error')); if (event.target === $('#palette')) closeOverlays(); });
 document.addEventListener('submit', event => {
   if (event.target.id === 'chat-form') { event.preventDefault(); const field=event.target.elements.message; sendChat(field.value); field.value=''; }
   if (event.target.id === 'settings-form') { event.preventDefault(); const data=Object.fromEntries(new FormData(event.target)); api('/api/settings',{method:'POST',body:JSON.stringify(data)}).then(()=>{document.documentElement.dataset.theme=data.theme;closeOverlays();notify('Settings saved');}).catch(e=>notify(e.message,'error')); }

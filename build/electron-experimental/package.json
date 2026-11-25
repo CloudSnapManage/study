@@ -1,0 +1,59 @@
+{
+  "name": "cognito-electron-experimental",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Experimental Electron wrapper for the canonical Cognito local app",
+  "homepage": "https://github.com/CloudSnapManage/study",
+  "author": {
+    "name": "Cognito Contributors",
+    "email": "noreply@example.invalid"
+  },
+  "main": "main.cjs",
+  "scripts": {
+    "test": "node --test test/*.test.cjs",
+    "start": "electron .",
+    "build:server": "bash scripts/build-server.sh",
+    "build:linux": "npm run test && npm run build:server && electron-builder --linux AppImage deb",
+    "build": "npm run build:linux"
+  },
+  "devDependencies": {
+    "electron": "45.5.0",
+    "electron-builder": "26.18.0"
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "minimatch": "11.0.9",
+      "@electron/universal": {
+        "minimatch": "11.0.9"
+      }
+    }
+  },
+  "build": {
+    "appId": "com.cognito.study.experimental",
+    "productName": "Cognito Experimental",
+    "artifactName": "Cognito-Experimental-${version}-${arch}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "wrapper-lib.cjs",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "server-dist/cognito-server",
+        "to": "server/cognito-server"
+      }
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "Education",
+      "executableName": "cognito-experimental",
+      "synopsis": "Experimental desktop wrapper for Cognito"
+    },
+    "asar": true
+  }
+}

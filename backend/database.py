@@ -1,9 +1,10 @@
 """SQLite storage with WAL mode and optional FTS5."""
 from __future__ import annotations
 
+import os
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Iterator
 
 from .config import Settings
 
@@ -71,6 +72,7 @@ def connect_db(settings: Settings | None = None) -> Iterator[sqlite3.Connection]
     settings = settings or Settings()
     settings.ensure_directories()
     db = _configure(sqlite3.connect(settings.database_path, timeout=10))
+    os.chmod(settings.database_path, 0o600)
     try:
         yield db
         db.commit()

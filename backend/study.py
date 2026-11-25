@@ -41,3 +41,21 @@ def audit_derivation(problem: str, derivation: str) -> dict:
         steps.append({"number": number, "line": line, "valid": valid, "note": note})
         previous = line
     return {"problem": problem, "status": "error" if first_error else "valid", "first_error_step": first_error, "summary": f"Error detected at Step {first_error}" if first_error else "No deterministic error detected", "steps": steps, "fallback": True}
+
+
+def grade_mock_exam(questions: list[dict], answers: dict) -> dict:
+    """Return a deterministic rubric while preserving generated questions."""
+    graded = []
+    for index, question in enumerate(questions):
+        response = str(answers.get(str(index), answers.get(index, ""))).strip()
+        solution = question.get("model_solution") or question.get("solution") or ""
+        marks = int(question.get("marks", 5))
+        score = min(marks, 1 if response else 0)
+        graded.append({
+            **question,
+            "solution": solution,
+            "response": response,
+            "score": score,
+            "feedback": "Response recorded for source-based review." if response else "No response was submitted.",
+        })
+    return {"questions": graded, "fallback": True}

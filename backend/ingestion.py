@@ -76,13 +76,25 @@ def scan_materials(settings: Settings | None = None) -> dict:
                     else:
                         cursor = db.execute("INSERT INTO documents(filename,filepath,file_hash,subject,doc_type,page_count) VALUES(?,?,?,?,?,?)", (source.name, str(source), file_hash, subject, doc_type, document.page_count))
                         document_id = cursor.lastrowid
-                    for page_index, page in enumerate(document):
+                    for page_index in range(document.page_count):
+                        page = document.load_page(page_index)
                         text = page.get_text("text").strip()
                         for chunk_index, content in enumerate(_chunks(text)):
                             db.execute("INSERT INTO chunks(document_id,page_number,chunk_index,heading,content,subject,filename) VALUES(?,?,?,?,?,?,?)", (document_id, page_index + 1, chunk_index, _topic_name(content) or "", content, subject, source.name))
                         for formula_index, match in enumerate(EQUATION.finditer(text), 1):
                             latex = match.group(1).strip()
                             db.execute("INSERT INTO formulas(document_id,page_number,subject,name,latex,context) VALUES(?,?,?,?,?,?)", (document_id, page_index + 1, subject, f"Equation {formula_index}", latex, text[:500]))
+                        for image_index, image in enumerate(page.get_images(full=True)):
+                            xref = image[0]
+                            pixmap = pymupdf.Pixmap(document, xref)
+                            width, height = pixmap.width, pixmap.height
+                            aspect = max(width / max(height, 1), height / max(width, 1))
+                            if width < 120 or height < 120 or aspect > 6:
+                                continue
+                            output = safe_resolve(settings.data_dir / "figures", f"{file_hash[:16]}_p{page_index + 1}_{image_index}.png")
+                            pixmap.save(output)
+                            caption = next((line.strip() for line in text.splitlines() if re.search(r"\b(?:fig(?:ure)?|diagram|circuit)\b", line, re.IGNORECASE)), "")
+                            db.execute("INSERT INTO diagrams(document_id,page_number,subject,image_path,caption,width,height) VALUES(?,?,?,?,?,?,?)", (document_id, page_index + 1, subject, str(output), caption, width, height))
                         topic = _topic_name(text)
                         if topic:
                             note_inc, paper_inc = (1, 0) if doc_type == "note" else (0, 1)
@@ -95,7 +107,7 @@ def scan_materials(settings: Settings | None = None) -> dict:
                             """, (subject, topic, f"{source.name}, p. {page_index + 1}", note_inc, paper_inc, min(100, note_inc * 10 + paper_inc * 25)))
                     document.close()
                 indexed += 1
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 -- isolate malformed/unreadable PDFs per file
                 errors.append({"file": str(source), "error": str(exc)})
     return {"indexed": indexed, "skipped": skipped, "errors": errors}
 

@@ -46,6 +46,28 @@ def test_search_returns_exact_provenance(tmp_path: Path):
     assert result[0]["doc_type"] == "past_paper"
 
 
+def test_scan_extracts_embedded_diagram_to_sandboxed_asset(tmp_path: Path):
+    settings = Settings(project_root=tmp_path)
+    init_db(settings)
+    pdf = settings.materials_dir / "notes" / "Physics" / "diagram.pdf"
+    pdf.parent.mkdir(parents=True)
+    image = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, 140, 140), 0)
+    image.clear_with(200)
+    document = fitz.open()
+    page = document.new_page()
+    page.insert_text((72, 72), "Circuit diagram")
+    page.insert_image(fitz.Rect(72, 100, 212, 240), pixmap=image)
+    document.save(pdf)
+    document.close()
+    scan_materials(settings)
+    with connect_db(settings) as db:
+        diagram = db.execute("SELECT image_path,width,height FROM diagrams").fetchone()
+    assert diagram is not None
+    assert Path(diagram["image_path"]).is_relative_to(settings.data_dir / "figures")
+    assert Path(diagram["image_path"]).exists()
+    assert diagram["width"] >= 120 and diagram["height"] >= 120
+
+
 def test_render_pdf_page_produces_png_and_rejects_escape(tmp_path: Path):
     settings = Settings(project_root=tmp_path)
     init_db(settings)
