@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Cognito</title>
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="app-shell">
+    <header class="topbar">
+      <div class="topbar-start">
+        <button class="icon-button" data-action="toggle-sidebar" aria-label="Collapse navigation"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M2 3.5h12M2 8h12M2 12.5h12"/></svg></button>
+        <strong class="wordmark">Cognito</strong>
+        <label class="subject-picker"><span class="sr-only">Subject</span><select id="subject-filter"><option value="">All subjects</option></select></label>
+      </div>
+      <button class="command-trigger" data-action="open-palette"><span>Search formulas, notes, PDFs...</span><kbd>Ctrl K</kbd></button>
+      <div class="topbar-end">
+        <button class="button primary" data-action="scan-materials">Scan Materials</button>
+        <button class="icon-button" data-action="open-settings" aria-label="Settings"><svg aria-hidden="true" viewBox="0 0 16 16"><circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/></svg></button>
+      </div>
+    </header>
+
+    <div class="middle-shell">
+      <aside class="sidebar" id="sidebar">
+        <nav aria-label="Workspace">
+          <h2>Workspace</h2>
+          <button class="nav-item is-active" data-action="navigate" data-view="sprint"><span class="nav-glyph">S</span><span class="nav-label">Daily Sprint</span><span class="count-badge" id="due-count">0</span></button>
+          <button class="nav-item" data-action="navigate" data-view="radar"><span class="nav-glyph">R</span><span class="nav-label">Exam Radar</span></button>
+          <button class="nav-item" data-action="navigate" data-view="chat"><span class="nav-glyph">A</span><span class="nav-label">Agent Chat</span></button>
+          <button class="nav-item" data-action="navigate" data-view="vault"><span class="nav-glyph">V</span><span class="nav-label">Formula &amp; Diagram Vault</span></button>
+          <button class="nav-item" data-action="navigate" data-view="mock"><span class="nav-glyph">M</span><span class="nav-label">Mock Exam</span></button>
+          <button class="nav-item" data-action="navigate" data-view="checker"><span class="nav-glyph">C</span><span class="nav-label">Solution Checker</span></button>
+        </nav>
+        <section class="subject-list" aria-label="Detected subjects">
+          <h2>Subjects</h2>
+          <div id="subject-list"></div>
+        </section>
+      </aside>
+      <main id="workspace" tabindex="-1"></main>
+    </div>
+
+    <footer class="statusbar" aria-live="polite">
+      <span><i class="status-dot" id="db-dot"></i>SQLite: <b id="chunk-status">0 chunks</b></span>
+      <span><i class="status-dot" id="obsidian-dot"></i>Obsidian: <b id="obsidian-status">Unset</b></span>
+      <span><i class="status-dot" id="llm-dot"></i>Chat: <b id="llm-status">Ollama</b></span>
+      <span>Tokens: <b id="token-status">0</b></span>
+      <span class="status-message" id="status-message">Ready</span>
+    </footer>
+  </div>
+
+  <div class="modal-backdrop is-hidden" id="palette" role="dialog" aria-modal="true" aria-labelledby="palette-title">
+    <section class="command-palette">
+      <h2 class="sr-only" id="palette-title">Command palette</h2>
+      <input id="palette-input" type="search" placeholder="Search materials or run a command" autocomplete="off">
+      <div class="command-results" id="palette-results" role="listbox"></div>
+      <div class="palette-help"><span><kbd>↑</kbd><kbd>↓</kbd> Select</span><span><kbd>Enter</kbd> Open</span><span><kbd>Esc</kbd> Close</span></div>
+    </section>
+  </div>
+
+  <aside class="settings-drawer is-hidden" id="settings" aria-labelledby="settings-title">
+    <header><h2 id="settings-title">Settings</h2><button class="icon-button" data-action="close-overlay" aria-label="Close settings"><svg aria-hidden="true" viewBox="0 0 16 16"><path d="M3 3l10 10M13 3L3 13"/></svg></button></header>
+    <form id="settings-form">
+      <label>Materials directory<input name="materials_dir" value="./materials"></label>
+      <label>Obsidian vault path<input name="obsidian_vault_path" placeholder="Not configured"></label>
+      <label>Provider<select name="provider"><option value="ollama">Ollama</option><option value="openai-compatible">OpenAI-compatible</option></select></label>
+      <label>Base URL<input name="base_url" value="http://localhost:11434/v1"></label>
+      <label>Model<input name="model" value="qwen2.5-coder:7b"></label>
+      <label>API key<input name="api_key" type="password" autocomplete="off"></label>
+      <fieldset><legend>Theme</legend><label class="choice"><input type="radio" name="theme" value="dark" checked> Graphite Dark</label><label class="choice"><input type="radio" name="theme" value="light"> Paper Light</label></fieldset>
+      <div class="form-actions"><button type="button" class="button" data-action="test-connection">Test Connection</button><button class="button primary" type="submit">Save changes</button></div>
+      <p class="connection-result" id="connection-result"></p>
+    </form>
+  </aside>
+
+  <div class="toast is-hidden" id="toast" role="status"></div>
+  <script src="/vendor/katex/katex.min.js"></script>
+  <script src="/vendor/marked/marked.umd.js"></script>
+  <script src="/vendor/dompurify/purify.min.js"></script>
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
